@@ -8,7 +8,7 @@ description = "netunicorn contrib library"
 readme = "README.md"
 requires-python = ">=3.9"
 keywords = ["netunicorn"]
-license = {text = "MIT"}
+license = "MIT"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -21,5 +21,7 @@ dependencies = [
     "netunicorn-base >= 0.4.0, < 0.5.0",
 ]
 
-# [tool.setuptools.packages.find]
-# where = ["src"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["netunicorn*"]
+namespaces = true
