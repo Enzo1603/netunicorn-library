@@ -5,4 +5,5 @@
 .env
 __pycache__
 
+netunicorn
 netunicorn_library.egg-info
