@@ -4,3 +4,5 @@
 .ipynb
 .env
 __pycache__
+
+netunicorn_library.egg-info
