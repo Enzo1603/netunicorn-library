@@ -1,50 +1,37 @@
 import os
 import re
 import subprocess
-from typing import Dict, Iterable, Literal, Optional, Sequence
+from typing import Dict, Iterable, List, Literal, Optional, Sequence
 from urllib.parse import quote
 
 from netunicorn.base import Architecture, Failure, Node, Success, Task, TaskDispatcher
+from netunicorn.library.tasks.tasks_utils import subprocess_run
 
 
 class UploadToWebDav(TaskDispatcher):
-    """
-    Dispatcher that selects a platform-specific WebDAV uploader implementation.
-    """
-
     def __init__(
         self,
         filepaths: Iterable[str],
-        endpoint: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        authentication: Literal["basic"] = "basic",
+        endpoint: str,
+        username: str,
+        password: str,
         directory: str = "",
         directory_parts: Optional[Sequence[str]] = None,
         info: Optional[Dict[str, str]] = None,
         node_env_keys: Optional[Sequence[str]] = None,
-        curl_bin: str = "curl",
-        url: Optional[str] = None,
-        user: Optional[str] = None,
         *args,
         **kwargs,
     ):
-        # Support both old and smart argument names
-        resolved_endpoint = (endpoint or url or "").rstrip("/")
-        resolved_username = username if username is not None else user
-
         self.filepaths = list(filepaths)
-        self.endpoint = resolved_endpoint
-        self.username = resolved_username
+        self.endpoint = endpoint.rstrip("/")
+        self.username = username
         self.password = password
-        self.authentication = authentication
         self.directory = directory
         self.directory_parts = list(directory_parts or [])
         self.info = dict(info or {})
-        self.node_env_keys = tuple(
+        self.node_env_keys = list(
             node_env_keys or UploadToWebDavImplementation.DEFAULT_NODE_ENV_KEYS
         )
-        self.curl_bin = curl_bin
 
         super().__init__(*args, **kwargs)
 
@@ -53,12 +40,10 @@ class UploadToWebDav(TaskDispatcher):
             endpoint=self.endpoint,
             username=self.username,
             password=self.password,
-            authentication=self.authentication,
             directory=self.directory,
             directory_parts=self.directory_parts,
             info=self.info,
             node_env_keys=self.node_env_keys,
-            curl_bin=self.curl_bin,
             name=self.name,
         )
         self.linux_implementation.requirements = ["sudo apt-get install -y curl"]
@@ -66,20 +51,12 @@ class UploadToWebDav(TaskDispatcher):
     def dispatch(self, node: Node) -> Task:
         if node.architecture in {Architecture.LINUX_AMD64, Architecture.LINUX_ARM64}:
             return self.linux_implementation
-
         raise NotImplementedError(
             f"UploadToWebDav is not implemented for {node.architecture}"
         )
 
 
 class UploadToWebDavImplementation(Task):
-    """
-    Linux implementation with smart WebDAV upload behavior:
-      - dynamic context-based folder paths
-      - MKCOL folder creation
-      - per-file success/failure details
-    """
-
     DEFAULT_NODE_ENV_KEYS = (
         "NETUNICORN_NODE_NAME",
         "NETUNICORN_NODE_ID",
@@ -90,35 +67,24 @@ class UploadToWebDavImplementation(Task):
     def __init__(
         self,
         filepaths: Iterable[str],
-        endpoint: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        authentication: Literal["basic"] = "basic",
+        endpoint: str,
+        username: str,
+        password: str,
         directory: str = "",
         directory_parts: Optional[Sequence[str]] = None,
         info: Optional[Dict[str, str]] = None,
         node_env_keys: Optional[Sequence[str]] = None,
-        curl_bin: str = "curl",
-        url: Optional[str] = None,
-        user: Optional[str] = None,
         *args,
         **kwargs,
     ):
-        # Support both old and smart argument names
-        resolved_endpoint = (endpoint or url or "").rstrip("/")
-        resolved_username = username if username is not None else user
-
         self.filepaths = list(filepaths)
-        self.endpoint = resolved_endpoint
-        self.username = resolved_username
+        self.endpoint = endpoint.rstrip("/")
+        self.username = username
         self.password = password
-        self.authentication = authentication
         self.directory = directory
         self.directory_parts = list(directory_parts or [])
         self.info = dict(info or {})
-        self.node_env_keys = tuple(node_env_keys or self.DEFAULT_NODE_ENV_KEYS)
-        self.curl_bin = curl_bin
-
+        self.node_env_keys = list(node_env_keys or self.DEFAULT_NODE_ENV_KEYS)
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -131,37 +97,40 @@ class UploadToWebDavImplementation(Task):
         return text.strip("._-") or "unknown"
 
     def _join_webdav_url(self, *parts: object) -> str:
-        sanitized = [self._sanitize_segment(part) for part in parts if part is not None]
-        sanitized = [part for part in sanitized if part]
+        sanitized = [self._sanitize_segment(p) for p in parts if p is not None]
+        sanitized = [p for p in sanitized if p]
         if not sanitized:
             return f"{self.endpoint}/"
-        encoded = [quote(part, safe="._-") for part in sanitized]
+        encoded = [quote(p, safe="._-") for p in sanitized]
         return f"{self.endpoint}/{'/'.join(encoded)}/"
 
     def _detect_node(self) -> str:
-        for env_key in self.node_env_keys:
-            candidate = os.environ.get(env_key)
-            if candidate:
-                return self._sanitize_segment(candidate)
+        for key in self.node_env_keys:
+            value = os.environ.get(key)
+            if value:
+                return self._sanitize_segment(value)
         return "unknown-node"
 
     def _mkcol(self, folder_url: str, auth: str) -> bool:
-        command = [
-            self.curl_bin,
-            "-sS",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "-X",
-            "MKCOL",
-            "--user",
-            auth,
-            folder_url,
-        ]
-        process = subprocess.run(command, capture_output=True, text=True)
-        status_code = (process.stdout or "").strip()
-        return status_code in {"201", "301", "405"}
+        # subprocess.run used directly to inspect the HTTP status code
+        process = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "-X",
+                "MKCOL",
+                "--user",
+                auth,
+                folder_url,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return (process.stdout or "").strip() in {"201", "301", "405"}
 
     def _build_context(self) -> Dict[str, str]:
         context: Dict[str, str] = {
@@ -186,28 +155,17 @@ class UploadToWebDavImplementation(Task):
         return self._sanitize_segment(text)
 
     def run(self):
-        if not self.endpoint:
-            return Failure("Missing WebDAV endpoint/url")
-        if self.authentication != "basic":
-            return Failure(f"Unsupported authentication type: {self.authentication}")
-        if not self.username or not self.password:
-            return Failure("Missing WebDAV credentials")
-
         auth = f"{self.username}:{self.password}"
         context = self._build_context()
 
-        path_parts = [self.directory]
-        path_parts.extend(
-            self._resolve_part(part, context) for part in self.directory_parts
-        )
-        path_parts = [part for part in path_parts if part]
+        path_parts: List[str] = [self.directory]
+        path_parts += [self._resolve_part(p, context) for p in self.directory_parts]
+        path_parts = [p for p in path_parts if p]
 
-        # Attempt folder creation (best effort)
         for depth in range(1, len(path_parts) + 1):
-            folder_url = self._join_webdav_url(*path_parts[:depth])
-            self._mkcol(folder_url, auth)
+            self._mkcol(self._join_webdav_url(*path_parts[:depth]), auth)
 
-        base_folder_url = self._join_webdav_url(*path_parts)
+        base_url = self._join_webdav_url(*path_parts)
         results = []
 
         for filepath in self.filepaths:
@@ -216,32 +174,18 @@ class UploadToWebDavImplementation(Task):
                 results.append(Failure(f"Missing local file: {filepath}"))
                 continue
 
-            dest_url = f"{base_folder_url}{quote(filename, safe='._-')}"
-            command = [
-                self.curl_bin,
-                "--fail",
-                "-sS",
-                "-u",
-                auth,
-                "-T",
-                filepath,
-                dest_url,
-            ]
-            process = subprocess.run(command, capture_output=True, text=True)
-
-            if process.returncode == 0:
+            dest_url = f"{base_url}{quote(filename, safe='._-')}"
+            result = subprocess_run(
+                ["curl", "--fail", "-sS", "-u", auth, "-T", filepath, dest_url]
+            )
+            if isinstance(result, Success):
                 results.append(Success(f"Uploaded to: {dest_url}"))
             else:
-                error_message = (
-                    process.stderr or process.stdout or "upload failed"
-                ).strip()
                 results.append(
-                    Failure(f"Upload failed for {filename}: {error_message}")
+                    Failure(f"Upload failed for {filename}: {result.failure()}")
                 )
 
         container_type = (
-            Success
-            if all(isinstance(result, Success) for result in results)
-            else Failure
+            Success if all(isinstance(r, Success) for r in results) else Failure
         )
         return container_type(results)
