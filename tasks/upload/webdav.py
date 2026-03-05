@@ -1,10 +1,11 @@
 import os
 import re
 import subprocess
-from typing import Dict, Iterable, List, Literal, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence
 from urllib.parse import quote
 
 from netunicorn.base import Architecture, Failure, Node, Success, Task, TaskDispatcher
+
 from netunicorn.library.tasks.tasks_utils import subprocess_run
 
 
