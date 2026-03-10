@@ -23,8 +23,20 @@ dependencies = [
 
 [tool.setuptools]
 package-dir = { "netunicorn.library.tasks" = "tasks", "netunicorn.library.pipelines" = "pipelines" }
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["netunicorn", "netunicorn.*"]
-namespaces = true
+packages = [
+    "netunicorn",
+    "netunicorn.library",
+    "netunicorn.library.tasks",
+    "netunicorn.library.tasks.capture",
+    "netunicorn.library.tasks.data_transfer",
+    "netunicorn.library.tasks.handlers",
+    "netunicorn.library.tasks.letsencrypt",
+    "netunicorn.library.tasks.measurements",
+    "netunicorn.library.tasks.network_attacks",
+    "netunicorn.library.tasks.preprocessing",
+    "netunicorn.library.tasks.qoe_youtube",
+    "netunicorn.library.tasks.upload",
+    "netunicorn.library.tasks.utils",
+    "netunicorn.library.tasks.video_watchers",
+    "netunicorn.library.pipelines",
+]
