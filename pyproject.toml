@@ -23,4 +23,8 @@ dependencies = [
 
 [tool.setuptools]
 package-dir = { "netunicorn.library.tasks" = "tasks", "netunicorn.library.pipelines" = "pipelines" }
-packages = ["netunicorn", "netunicorn.library", "netunicorn.library.tasks", "netunicorn.library.pipelines"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["netunicorn", "netunicorn.*"]
+namespaces = true
