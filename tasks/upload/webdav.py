@@ -1,11 +1,13 @@
+import json
 import os
 import re
 import subprocess
+import urllib.error
+import urllib.request
 from typing import Dict, Iterable, List, Optional, Sequence
 from urllib.parse import quote
 
 from netunicorn.base import Architecture, Failure, Node, Success, Task, TaskDispatcher
-
 from netunicorn.library.tasks.tasks_utils import subprocess_run
 
 
@@ -105,12 +107,48 @@ class UploadToWebDavImplementation(Task):
         encoded = [quote(p, safe="._-") for p in sanitized]
         return f"{self.endpoint}/{'/'.join(encoded)}/"
 
-    def _detect_node(self) -> str:
-        for key in self.node_env_keys:
-            value = os.environ.get(key)
-            if value:
-                return self._sanitize_segment(value)
-        return "unknown-node"
+    @staticmethod
+    def _fetch_region_from_ec2_metadata() -> Optional[str]:
+        token_request = urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            method="PUT",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+        )
+        headers = {}
+
+        try:
+            with urllib.request.urlopen(token_request, timeout=1) as response:
+                token = response.read().decode().strip()
+            if token:
+                headers["X-aws-ec2-metadata-token"] = token
+        except urllib.error.URLError:
+            pass
+
+        document_request = urllib.request.Request(
+            "http://169.254.169.254/latest/dynamic/instance-identity/document",
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(document_request, timeout=1) as response:
+                document = json.loads(response.read().decode())
+        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
+            return None
+
+        region = document.get("region")
+        if not region:
+            availability_zone = document.get("availabilityZone", "")
+            if availability_zone:
+                region = availability_zone[:-1]
+        return region
+
+    def _detect_region(self) -> str:
+        region = (
+            os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+            or self._fetch_region_from_ec2_metadata()
+            or "unknown-region"
+        )
+        return self._sanitize_segment(region)
 
     def _mkcol(self, folder_url: str, auth: str) -> bool:
         # subprocess.run used directly to inspect the HTTP status code
@@ -134,16 +172,15 @@ class UploadToWebDavImplementation(Task):
         return (process.stdout or "").strip() in {"201", "301", "405"}
 
     def _build_context(self) -> Dict[str, str]:
+        experiment = (
+            self.info.get("experiment") or self.info.get("algorithm") or "experiment"
+        )
         context: Dict[str, str] = {
             "executor_id": self._sanitize_segment(
                 os.environ.get("NETUNICORN_EXECUTOR_ID") or "unknown-executor"
             ),
-            "node": self._detect_node(),
-            "region": self._sanitize_segment(
-                os.environ.get("AWS_REGION")
-                or os.environ.get("AWS_DEFAULT_REGION")
-                or "unknown-region"
-            ),
+            "region": self._detect_region(),
+            "experiment": self._sanitize_segment(experiment),
         }
         for key, value in self.info.items():
             context[key] = self._sanitize_segment(value)
@@ -160,7 +197,14 @@ class UploadToWebDavImplementation(Task):
         context = self._build_context()
 
         path_parts: List[str] = [self.directory]
-        path_parts += [self._resolve_part(p, context) for p in self.directory_parts]
+        resolved_parts = [self._resolve_part(p, context) for p in self.directory_parts]
+        if not resolved_parts:
+            resolved_parts = [
+                context["experiment"],
+                context["region"],
+                context["executor_id"],
+            ]
+        path_parts += resolved_parts
         path_parts = [p for p in path_parts if p]
 
         for depth in range(1, len(path_parts) + 1):
