@@ -10,6 +10,12 @@ from urllib.parse import quote
 from netunicorn.base import Architecture, Failure, Node, Success, Task, TaskDispatcher
 from netunicorn.library.tasks.tasks_utils import subprocess_run
 
+AWS_IMDS_BASE_URL = "http://169.254.169.254"
+AWS_IMDS_TOKEN_URL = f"{AWS_IMDS_BASE_URL}/latest/api/token"
+AWS_IMDS_IDENTITY_DOCUMENT_URL = (
+    f"{AWS_IMDS_BASE_URL}/latest/dynamic/instance-identity/document"
+)
+
 
 class UploadToWebDav(TaskDispatcher):
     def __init__(
@@ -110,7 +116,7 @@ class UploadToWebDavImplementation(Task):
     @staticmethod
     def _fetch_region_from_ec2_metadata() -> Optional[str]:
         token_request = urllib.request.Request(
-            "http://169.254.169.254/latest/api/token",
+            AWS_IMDS_TOKEN_URL,
             method="PUT",
             headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
         )
@@ -125,7 +131,7 @@ class UploadToWebDavImplementation(Task):
             pass
 
         document_request = urllib.request.Request(
-            "http://169.254.169.254/latest/dynamic/instance-identity/document",
+            AWS_IMDS_IDENTITY_DOCUMENT_URL,
             headers=headers,
         )
         try:
